@@ -9,7 +9,7 @@ import sys
 import inspect
 from functools import wraps
 
-from shared.context import new_log_context
+from context import new_log_context
 
 
 def has_argument(func, arg):
