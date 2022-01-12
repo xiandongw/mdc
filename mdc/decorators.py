@@ -9,7 +9,7 @@ import sys
 import inspect
 from functools import wraps
 
-from mdc.context import new_log_context
+from shared.context import new_log_context
 
 
 def has_argument(func, arg):
@@ -105,6 +105,56 @@ def wrap_function_or_generator(func, pass_context_as=None, context_dict=None):
     return wrapper
 
 
+def async_wrap_function_or_generator(func, pass_context_as=None, context_dict=None):
+
+    if pass_context_as is not None:
+        if not has_argument(func, pass_context_as):
+            raise ValueError(
+                "Function {} needs to have a {} argument to be able to recieve the context".format(
+                    func, pass_context_as
+                )
+            )
+
+    if context_dict is None:
+        context_dict = {}
+
+    if inspect.isgeneratorfunction(func):
+
+        if pass_context_as is not None:
+            raise NotImplementedError(
+                "Passing the context object to a generator is not supported"
+            )
+
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+
+            to_send = None
+            generator = await func(*args, **kwargs)
+
+            while True:
+                try:
+                    with new_log_context(**context_dict) as context:
+                        to_yield = generator.send(to_send)
+                except StopIteration:
+                    return
+                else:
+                    to_send = yield to_yield
+
+    else:
+
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            with new_log_context(**context_dict) as context:
+                if pass_context_as is None:
+                    return await func(*args, **kwargs)
+                else:
+                    new_kwargs = {pass_context_as: context}
+                    new_kwargs.update(**kwargs)
+                    return await func(*args, **new_kwargs)
+
+    return wrapper
+
+
 def log_value(**mdc_kwargs):
 
     """Adds constant values to the logging context"""
@@ -128,7 +178,24 @@ def log_value_and_pass_context(**mdc_kwargs):
     return decorator
 
 
+def async_log_value_and_pass_context(**mdc_kwargs):
+
+    """Adds constant values to the logging context and
+    passes it as an argument to the function under the name 'ctx'"""
+
+    def decorator(func):
+        @wraps(func)
+        async def decorated_function(*args, **kwargs):
+            f = async_wrap_function_or_generator(
+                func, pass_context_as="ctx", context_dict=mdc_kwargs
+            )
+            return await f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
+
 with_mdc = log_value_and_pass_context
+with_async_mdc = async_log_value_and_pass_context
 
 
 def pass_context(name):
